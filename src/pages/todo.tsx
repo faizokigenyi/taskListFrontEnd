@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "./SideBarForm";
 import TaskForm from "./TaskForm";
@@ -47,7 +47,7 @@ const EmptyState = () => (
   </div>
 );
 
-const Todo = ({ userName, userId, onLogout }: TodoProps) => {
+const Todo = ({ userName,  onLogout }: TodoProps) => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [form, setForm] = useState({
     title: "",
