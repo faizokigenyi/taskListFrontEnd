@@ -3,49 +3,65 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import SignIn from "./pages/signIn";
 import SignUp from "./pages/signUp";
 import Todo from "./pages/todo";
+import ProtectedRoute from "./components/ProtectedRoute";
+import { logout, isAuthenticated } from "./utils/auth";
 
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [userName, setUserName] = useState(""); // store signed in user's name
-  const [userId, setUserId] = useState<number | null>(null); // store signed in user's id
+  const [userName, setUserName] = useState("");
+  const [userId, setUserId] = useState<number | null>(null);
 
-  if (!isLoggedIn) {
-    return (
-      <BrowserRouter>
-        <Routes>
-          <Route path="/signup" element={<SignUp />} />
-          <Route
-            path="/signin"
-            element={
-              <SignIn
-                onLogin={(id: number, name: string) => {
-                  setIsLoggedIn(true);
-                  setUserId(id);
-                  setUserName(name);
-                }}
-              />
-            }
-          />
-          <Route path="*" element={<Navigate to="/signin" />} />
-        </Routes>
-      </BrowserRouter>
-    );
-  }
+  const handleLogout = () => {
+    logout();
+    setUserId(null);
+    setUserName("");
+  };
 
   return (
     <BrowserRouter>
       <Routes>
+        {/* Public routes */}
+        <Route path="/signup" element={<SignUp />} />
+        <Route
+          path="/signin"
+          element={
+            isAuthenticated() ? (
+              <Navigate to="/tasks" />
+            ) : (
+              <SignIn
+                onLogin={(id: number, name: string) => {
+                  setUserId(id);
+                  setUserName(name);
+                }}
+              />
+            )
+          }
+        />
+
+        {/* Protected routes */}
         <Route
           path="/tasks"
           element={
-            <Todo
-              userId={userId!} // pass userId internally
-              userName={userName}
-              onLogout={() => setIsLoggedIn(false)}
-            />
+            <ProtectedRoute>
+              <Todo
+                userId={userId!}
+                userName={userName}
+                onLogout={handleLogout}
+              />
+            </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to="/tasks" />} />
+
+        {/* Catch-all redirect */}
+        <Route
+          path="*"
+          element={
+            isAuthenticated() ? (
+              <Navigate to="/tasks" />
+            ) : (
+              <Navigate to="/signin" />
+            )
+          }
+        />
       </Routes>
     </BrowserRouter>
   );

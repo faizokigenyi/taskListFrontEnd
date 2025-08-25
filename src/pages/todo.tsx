@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import Sidebar from "./SideBarForm";
 import TaskForm from "./TaskForm";
 
@@ -11,12 +12,42 @@ type Task = {
 };
 
 type TodoProps = {
-  userId: number;
   userName: string;
+  userId: number;
   onLogout: () => void;
 };
 
-const Todo = ({ userId, userName, onLogout }: TodoProps) => {
+const EmptyState = () => (
+  <div className="col-span-full flex flex-col items-center justify-center px-6 py-20 text-center">
+    <div className="mx-auto max-w-md">
+      <div className="relative mx-auto mb-8 h-24 w-24">
+        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-blue-100 to-indigo-200 shadow-inner"></div>
+        <div className="absolute inset-3 rounded-xl bg-white/90 backdrop-blur-sm shadow-sm flex items-center justify-center">
+          <svg
+            className="h-8 w-8 text-blue-500"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M9 12h3.75M9 15h3.75M9 18h3.75m3-6V7a2 2 0 00-2-2h-3V3a2 2 0 00-2-2h-3a2 2 0 00-2 2v2H5a2 2 0 00-2 2v8a2 2 0 002 2h14a2 2 0 002-2V7a2 2 0 00-2-2h-3V3a2 2 0 00-2-2z"
+            />
+          </svg>
+        </div>
+      </div>
+      <h3 className="text-xl font-semibold text-blue-900 mb-3">No tasks yet</h3>
+      <p className="text-blue-700 mb-8 leading-relaxed">
+        Get started by creating your first task to organize your workflow and
+        boost productivity.
+      </p>
+    </div>
+  </div>
+);
+
+const Todo = ({ userName, userId, onLogout }: TodoProps) => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [form, setForm] = useState({
     title: "",
@@ -26,54 +57,109 @@ const Todo = ({ userId, userName, onLogout }: TodoProps) => {
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [loading, setLoading] = useState(true); // <-- added loading state
 
-  const fetchTasks = async () => {
-    try {
-      const res = await fetch(`http://localhost:3000/users/${userId}/tasks`);
-      if (res.ok) {
-        const data: Task[] = await res.json();
-        setTasks(data);
-      }
-    } catch (error) {
-      console.error("Error fetching tasks:", error);
-    }
+  const navigate = useNavigate();
+
+  // Safe logout handler
+  const handleLogout = () => {
+    localStorage.removeItem("access_token");
+    onLogout();
+    navigate("/signin");
   };
 
+  // Spinner component
+  const Spinner = () => (
+    <div className="col-span-full flex justify-center items-center py-20">
+      <div className="w-12 h-12 border-4 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
+    </div>
+  );
+
+  // Fetch tasks once on mount
+  useEffect(() => {
+    const fetchTasks = async () => {
+      const token = localStorage.getItem("access_token");
+      if (!token) {
+        handleLogout();
+        return;
+      }
+
+      setLoading(true); // start loading
+      try {
+        const res = await fetch("http://localhost:3000/tasks", {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (res.status === 401) {
+          handleLogout();
+          return;
+        }
+
+        if (res.ok) {
+          const data: Task[] = await res.json();
+          setTasks((prev) =>
+            JSON.stringify(prev) !== JSON.stringify(data) ? data : prev
+          );
+        }
+      } catch (err) {
+        console.error("Error fetching tasks:", err);
+      } finally {
+        setLoading(false); // stop loading
+      }
+    };
+
+    fetchTasks();
+  }, []); // only on mount
+
+  // Save task (create or update)
   const saveTask = async () => {
     if (!form.title.trim() && !form.description.trim()) return;
 
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      handleLogout();
+      return;
+    }
+
     try {
+      let res;
       if (editingTask) {
-        // Update existing
-        const res = await fetch(
-          `http://localhost:3000/users/${userId}/tasks/${editingTask.id}`,
-          {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(form),
-          }
-        );
-        if (res.ok) {
-          const updatedTask: Task = await res.json();
-          setTasks((prev) =>
-            prev.map((t) => (t.id === updatedTask.id ? updatedTask : t))
-          );
-        }
-      } else {
-        // Add new
-        const res = await fetch(`http://localhost:3000/users/${userId}/tasks`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        res = await fetch(`http://localhost:3000/tasks/${editingTask.id}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify(form),
         });
-
-        if (res.ok) {
-          const newTask: Task = await res.json();
-          setTasks((prev) => [...prev, newTask]);
-        }
+      } else {
+        res = await fetch("http://localhost:3000/tasks", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(form),
+        });
       }
 
-      // Reset
+      if (res.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      if (res.ok) {
+        const updatedTask: Task = await res.json();
+        setTasks((prev) =>
+          editingTask
+            ? prev.map((t) => (t.id === updatedTask.id ? updatedTask : t))
+            : [...prev, updatedTask]
+        );
+      }
+
       setForm({
         title: "",
         description: "",
@@ -82,8 +168,8 @@ const Todo = ({ userId, userName, onLogout }: TodoProps) => {
       });
       setEditingTask(null);
       setIsSidebarOpen(false);
-    } catch (error) {
-      console.error("Error saving task:", error);
+    } catch (err) {
+      console.error("Error saving task:", err);
     }
   };
 
@@ -99,16 +185,31 @@ const Todo = ({ userId, userName, onLogout }: TodoProps) => {
   };
 
   const handleDelete = async (id: number) => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      handleLogout();
+      return;
+    }
+
     try {
-      const res = await fetch(
-        `http://localhost:3000/users/${userId}/tasks/${id}`,
-        { method: "DELETE" }
-      );
+      const res = await fetch(`http://localhost:3000/tasks/${id}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (res.status === 401) {
+        handleLogout();
+        return;
+      }
+
       if (res.ok) {
         setTasks((prev) => prev.filter((t) => t.id !== id));
       }
-    } catch (error) {
-      console.error("Error deleting task:", error);
+    } catch (err) {
+      console.error("Error deleting task:", err);
     }
   };
 
@@ -119,134 +220,81 @@ const Todo = ({ userId, userName, onLogout }: TodoProps) => {
   ) => {
     const target = e.target;
     let value: string | boolean = target.value;
-    if (target instanceof HTMLInputElement && target.type === "checkbox")
+    if (target instanceof HTMLInputElement && target.type === "checkbox") {
       value = target.checked;
+    }
     setForm((prev) => ({ ...prev, [target.name]: value }));
   };
-
-  useEffect(() => {
-    fetchTasks();
-  }, []);
 
   const completedTasks = tasks.filter((t) => t.completed).length;
   const progressPercentage =
     tasks.length > 0 ? (completedTasks / tasks.length) * 100 : 0;
 
-  // Enhanced empty state component
-  const EmptyState = () => (
-    <div className="col-span-full flex flex-col items-center justify-center px-6 py-16 text-center">
-      <div className="mx-auto max-w-md">
-        {/* Animated illustration */}
-        <div className="relative mx-auto mb-8 h-24 w-24">
-          <div className="absolute inset-0 rounded-full bg-gradient-to-br from-blue-100 to-purple-100 animate-pulse"></div>
-          <div className="absolute inset-2 rounded-full bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center">
-            <svg className="h-10 w-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-            </svg>
-          </div>
-        </div>
-        
-        {/* Main heading */}
-        <h3 className="text-xl font-semibold text-slate-900 mb-3">
-          Ready to get organized?
-        </h3>
-        
-        {/* Description */}
-        <p className="text-slate-600 mb-8 leading-relaxed">
-          Create your first task to start building productive habits and achieving your goals.
-        </p>
-        
-        {/* Call to action button */}
-        <button 
-          onClick={() => {
-            setEditingTask(null);
-            setForm({
-              title: "",
-              description: "",
-              completed: false,
-              priority: "low",
-            });
-            setIsSidebarOpen(true);
-          }}
-          className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 shadow-lg hover:shadow-xl transform hover:scale-105"
-        >
-          <svg className="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          Create Your First Task
-        </button>
-      </div>
-    </div>
-  );
+  const getPriorityColor = (priority: string, isCompleted: boolean) => {
+    if (isCompleted)
+      return "border-emerald-200/60 bg-gradient-to-br from-emerald-50 to-teal-50";
+    switch (priority) {
+      case "high":
+        return "border-rose-200/60 bg-gradient-to-br from-rose-50 to-pink-50";
+      case "medium":
+        return "border-amber-200/60 bg-gradient-to-br from-amber-50 to-orange-50";
+      default:
+        return "border-sky-200/60 bg-gradient-to-br from-sky-50 to-blue-50";
+    }
+  };
+
+  const getPriorityDot = (priority: string, isCompleted: boolean) => {
+    if (isCompleted) return "bg-gradient-to-r from-emerald-500 to-teal-500";
+    switch (priority) {
+      case "high":
+        return "bg-gradient-to-r from-rose-500 to-pink-500";
+      case "medium":
+        return "bg-gradient-to-r from-amber-500 to-orange-500";
+      default:
+        return "bg-gradient-to-r from-sky-500 to-blue-500";
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 relative overflow-hidden">
-      {/* Enhanced background gradients */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-10 left-[-10%] w-52 h-52 sm:w-72 sm:h-72 bg-gradient-to-r from-blue-400/10 to-purple-400/10 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-10 right-[-10%] w-72 h-72 sm:w-96 sm:h-96 bg-gradient-to-r from-purple-400/10 to-pink-400/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-r from-indigo-300/5 to-blue-300/5 rounded-full blur-3xl animate-pulse delay-500"></div>
-      </div>
-
-      <div className="relative max-w-6xl mx-auto px-4 py-8">
-        {/* Enhanced Header with Progress Bar */}
-        <div className="backdrop-blur-xl bg-white/70 border border-white/20 rounded-3xl shadow-xl shadow-black/5 mb-8 px-6 py-6 sm:px-8 sm:py-8">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
-                <svg
-                  className="w-8 h-8 text-white"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-slate-900 via-blue-800 to-purple-800 bg-clip-text text-transparent">
-                  Tasks Overview
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-cyan-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Header Section */}
+        <div className="bg-white/90 backdrop-blur-sm border border-blue-200/50 rounded-xl shadow-lg shadow-blue-100/50 mb-8">
+          <div className="px-6 py-6 border-b border-blue-200/30">
+            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
+              <div className="flex-1">
+                <h1 className="text-2xl font-semibold text-blue-900 mb-1">
+                  Task Management
                 </h1>
-                <p className="text-slate-600 mt-1 text-sm sm:text-base">
+                <p className="text-blue-700">
                   Welcome back,{" "}
-                  <span className="font-semibold text-blue-600">
-                    {userName}
-                  </span>
+                  <span className="font-medium text-blue-900">{userName}</span>
                 </p>
               </div>
-            </div>
 
-            <div className="flex sm:flex-row items-start sm:items-center gap-4 sm:gap-6 mt-4 md:mt-0">
-              <div className="text-center">
-                <div className="text-xl sm:text-2xl font-bold text-slate-900">
-                  {tasks.length}
+              {/* Task Stats */}
+              <div className="flex items-center gap-6">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-900">
+                    {tasks.length}
+                  </div>
+                  <div className="text-sm text-blue-600">Total Tasks</div>
                 </div>
-                <div className="text-xs sm:text-sm text-slate-600 uppercase tracking-wide">
-                  Total Tasks
+                <div className="w-px h-12 bg-blue-200"></div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-emerald-600">
+                    {completedTasks}
+                  </div>
+                  <div className="text-sm text-blue-600">Completed</div>
                 </div>
               </div>
-              <div className="text-center">
-                <div className="text-xl sm:text-2xl font-bold text-green-600">
-                  {completedTasks}
-                </div>
-                <div className="text-xs sm:text-sm text-slate-600 uppercase tracking-wide">
-                  Completed
-                </div>
-              </div>
-              <div className="flex gap-3">
+              {/* Action Buttons */}
+              <div className="flex items-center gap-3">
                 <button
-                  onClick={onLogout}
-                  className="p-2 sm:p-3 text-slate-700 bg-white/80 backdrop-blur-sm border border-slate-200 rounded-xl hover:bg-white hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 group"
-                  title="Sign Out"
+                  onClick={handleLogout}
+                  className="px-4 py-2 text-blue-700 bg-white border border-blue-300 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-colors duration-200 font-medium text-sm"
                 >
-                  <svg className="w-4 h-4 sm:w-5 sm:h-5 group-hover:text-red-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                  </svg>
+                  Sign Out
                 </button>
                 <button
                   onClick={() => {
@@ -259,96 +307,161 @@ const Todo = ({ userId, userName, onLogout }: TodoProps) => {
                     });
                     setIsSidebarOpen(true);
                   }}
-                  className="px-4 sm:px-6 py-2 sm:py-3 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105"
+                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 font-medium text-sm inline-flex items-center gap-2 shadow-md shadow-blue-200"
                 >
-                  + Add Task
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 4v16m8-8H4"
+                    />
+                  </svg>
+                  New Task
                 </button>
               </div>
             </div>
           </div>
-          
-          {/* Progress Bar */}
+
+          {/* Progress Section */}
           {tasks.length > 0 && (
-            <div className="mt-6 pt-6 border-t border-slate-200/50">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-medium text-slate-700">Progress</span>
-                <span className="text-sm font-bold text-slate-900">{Math.round(progressPercentage)}%</span>
+            <div className="px-6 py-6">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-medium text-blue-900">
+                    Progress
+                  </h3>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                    {completedTasks} of {tasks.length} completed
+                  </span>
+                </div>
+                <span className="text-sm font-semibold text-blue-900">
+                  {Math.round(progressPercentage)}%
+                </span>
               </div>
-              <div className="w-full bg-slate-200/50 rounded-full h-2 overflow-hidden">
-                <div 
-                  className="h-2 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full transition-all duration-500 ease-out"
+              <div className="w-full bg-blue-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className="h-2 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-700 ease-out"
                   style={{ width: `${progressPercentage}%` }}
-                ></div>
+                />
               </div>
             </div>
           )}
         </div>
 
-        {/* Task List Grid with Enhanced Empty State */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {tasks.length === 0 ? (
+        {/* Tasks Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {loading ? (
+            <Spinner />
+          ) : tasks.length === 0 ? (
             <EmptyState />
           ) : (
             tasks.map((task) => (
               <div
                 key={task.id}
-                className={`group relative backdrop-blur-sm border rounded-3xl p-4 sm:p-6 transition-all duration-300 hover:scale-[1.02] hover:shadow-xl ${
+                className={`relative bg-white/80 backdrop-blur-sm border rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden hover:scale-[1.02] ${getPriorityColor(
+                  task.priority,
                   task.completed
-                    ? "bg-gradient-to-br from-green-50/80 to-emerald-50/80 border-green-200/50"
-                    : "bg-gradient-to-br from-white/80 to-slate-50/80 border-slate-200/50"
-                }`}
+                )}`}
               >
-                <div className="flex justify-between items-start mb-3 sm:mb-4">
+                <div
+                  className={`absolute top-0 left-0 w-1 h-full ${getPriorityDot(
+                    task.priority,
+                    task.completed
+                  )}`}
+                />
+
+                <div className="p-6">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={`w-2 h-2 rounded-full ${getPriorityDot(
+                          task.priority,
+                          task.completed
+                        )}`}
+                      />
+                      <span className="text-xs font-medium text-slate-700 uppercase tracking-wide">
+                        {task.priority}
+                      </span>
+                    </div>
+                    {task.completed && (
+                      <div className="inline-flex items-center gap-1 px-2 py-1 bg-gradient-to-r from-emerald-100 to-teal-100 text-emerald-800 text-xs font-medium rounded-full border border-emerald-200">
+                        <svg
+                          className="w-3 h-3"
+                          fill="currentColor"
+                          viewBox="0 0 20 20"
+                        >
+                          <path
+                            fillRule="evenodd"
+                            d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                        Completed
+                      </div>
+                    )}
+                  </div>
+
                   <h3
-                    className={`text-base sm:text-lg font-bold leading-tight ${
+                    className={`text-lg font-semibold mb-2 leading-tight ${
                       task.completed
-                        ? "line-through text-green-700"
-                        : "text-slate-900"
+                        ? "text-slate-500 line-through"
+                        : "text-slate-800"
                     }`}
                   >
                     {task.title}
                   </h3>
-                  <span
-                    className={`inline-flex items-center px-2.5 sm:px-3 py-1 rounded-full text-xs sm:text-sm font-bold uppercase tracking-wide ${
-                      task.priority === "high"
-                        ? "bg-gradient-to-r from-red-100 to-pink-100 text-red-700 shadow-red-100/50"
-                        : task.priority === "medium"
-                        ? "bg-gradient-to-r from-amber-100 to-orange-100 text-amber-700 shadow-amber-100/50"
-                        : "bg-gradient-to-r from-green-100 to-emerald-100 text-green-700 shadow-green-100/50"
-                    } shadow-lg`}
+
+                  <p
+                    className={`text-sm mb-6 leading-relaxed ${
+                      task.completed ? "text-slate-400" : "text-slate-600"
+                    }`}
                   >
-                    {task.priority}
-                  </span>
-                </div>
-                <p
-                  className={`text-sm sm:text-base mb-4 sm:mb-6 leading-relaxed ${
-                    task.completed ? "text-green-600" : "text-slate-600"
-                  }`}
-                >
-                  {task.description || "No description provided"}
-                </p>
-                <div className="flex justify-between items-center">
-                  <span
-                    className={`inline-flex items-center px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-sm font-semibold ${
-                      task.completed
-                        ? "bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-green-200"
-                        : "bg-gradient-to-r from-orange-400 to-amber-400 text-white shadow-orange-200"
-                    } shadow-lg`}
-                  >
-                    {task.completed ? <>✓ Completed</> : <>⏳ In Progress</>}
-                  </span>
-                  <div className="flex gap-2">
+                    {task.description || "No description provided"}
+                  </p>
+
+                  <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleEdit(task)}
-                      className="px-3 py-1.5 text-xs font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200"
+                      className="flex-1 px-3 py-2 text-blue-700 bg-white/80 border border-blue-300 rounded-lg hover:bg-blue-50 hover:border-blue-400 transition-all duration-200 font-medium text-sm inline-flex items-center justify-center gap-2 backdrop-blur-sm"
                     >
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                        />
+                      </svg>
                       Edit
                     </button>
                     <button
                       onClick={() => handleDelete(task.id)}
-                      className="px-3 py-1.5 text-xs font-medium bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors duration-200"
+                      className="px-3 py-2 text-rose-700 bg-white/80 border border-rose-200 rounded-lg hover:bg-rose-50 hover:border-rose-300 transition-all duration-200 font-medium text-sm inline-flex items-center justify-center backdrop-blur-sm"
                     >
-                      Delete
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
                     </button>
                   </div>
                 </div>

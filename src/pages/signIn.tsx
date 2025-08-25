@@ -26,7 +26,8 @@ const SignIn = ({ onLogin }: SignInProps) => {
 
       const data = await res.json();
 
-      // Pass userId and userName to parent
+      // Save token & user info
+      localStorage.setItem("access_token", data.accessToken); // note: match key exactly
       onLogin(data.userId, data.userName);
     } catch (error) {
       console.error("Sign in error:", error);
@@ -39,13 +40,18 @@ const SignIn = ({ onLogin }: SignInProps) => {
       <div className="w-full max-w-md">
         <div className="bg-white px-8 py-10 shadow-sm border border-slate-200 rounded-2xl">
           <div className="mb-8 text-center">
-            <h1 className="text-3xl font-semibold text-slate-900 mb-2">Welcome back</h1>
+            <h1 className="text-3xl font-semibold text-slate-900 mb-2">
+              Welcome back
+            </h1>
             <p className="text-slate-600">Sign in to your account</p>
           </div>
-          
+
           <form onSubmit={handleSignIn} className="space-y-6">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
+              <label
+                htmlFor="email"
+                className="block text-sm font-medium text-slate-700 mb-2"
+              >
                 Email address
               </label>
               <input
@@ -58,9 +64,12 @@ const SignIn = ({ onLogin }: SignInProps) => {
                 className="w-full px-4 py-3 border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
               />
             </div>
-            
+
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-2">
+              <label
+                htmlFor="password"
+                className="block text-sm font-medium text-slate-700 mb-2"
+              >
                 Password
               </label>
               <input
@@ -73,7 +82,7 @@ const SignIn = ({ onLogin }: SignInProps) => {
                 className="w-full px-4 py-3 border border-slate-300 rounded-lg text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
               />
             </div>
-            
+
             <button
               type="submit"
               className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
@@ -81,11 +90,14 @@ const SignIn = ({ onLogin }: SignInProps) => {
               Sign In
             </button>
           </form>
-          
+
           <div className="mt-8 pt-6 border-t border-slate-200">
             <p className="text-center text-sm text-slate-600">
               Don't have an account?{" "}
-              <Link to="/signup" className="font-medium text-blue-600 hover:text-blue-500 transition-colors">
+              <Link
+                to="/signup"
+                className="font-medium text-blue-600 hover:text-blue-500 transition-colors"
+              >
                 Create account
               </Link>
             </p>
